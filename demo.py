@@ -69,7 +69,7 @@ async def demo_mcp_client():
     # Disconnect
     print("7. Disconnecting from MCP server...")
     await client.disconnect()
-    print("   ✓ Disconnected successfully")
+    print("   ✓ Disconnected (placeholder mode)")
     print()
     
     print("=" * 70)
