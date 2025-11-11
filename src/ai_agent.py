@@ -1,9 +1,4 @@
-"""
-Racing AI Agent
-
-This module provides an AI agent that uses OpenAI to process and analyze
-racing information from the MCP server.
-"""
+"""AI agent that combines OpenAI with live iRacing telemetry via pyirsdk."""
 
 import os
 from typing import Optional, Dict, Any, List
@@ -17,9 +12,9 @@ class RacingAIAgent:
     """
     AI Agent for sim-racing and sim-rally information gathering and analysis.
     
-    This agent connects to a racing MCP server and uses OpenAI to process
-    and interpret racing data, providing natural language insights about
-    the current racing situation.
+    This agent connects to live iRacing telemetry (through RacingMCPClient)
+    and uses OpenAI to interpret the data, providing natural language
+    insights about the current racing situation.
     """
     
     def __init__(
@@ -47,30 +42,35 @@ class RacingAIAgent:
         self.client = OpenAI(api_key=api_key)
         self.model = model
         
-        # Initialize MCP client
+    # Initialize MCP client
         self.mcp_client = RacingMCPClient(server_url=mcp_server_url)
         
         # Conversation history for context
         self.conversation_history: List[Dict[str, str]] = []
         
-    async def connect_to_server(self):
-        """Connect to the racing MCP server."""
-        await self.mcp_client.connect()
+    def connect_to_server(self) -> bool:
+        """Connect to the live iRacing telemetry stream.
+
+        Returns:
+            True if the connection succeeded, False otherwise.
+        """
+
+        return self.mcp_client.connect()
     
-    async def disconnect_from_server(self):
-        """Disconnect from the racing MCP server."""
-        await self.mcp_client.disconnect()
+    def disconnect_from_server(self):
+        """Disconnect from the underlying telemetry provider."""
+        self.mcp_client.disconnect()
     
-    async def get_racing_info(self) -> Dict[str, Any]:
+    def get_racing_info(self) -> Dict[str, Any]:
         """
         Gather comprehensive racing information from the MCP server.
         
         Returns:
             Dictionary containing all available racing information
         """
-        racing_situation = await self.mcp_client.get_racing_situation()
-        telemetry = await self.mcp_client.get_telemetry()
-        track_info = await self.mcp_client.get_track_info()
+        racing_situation = self.mcp_client.get_racing_situation()
+        telemetry = self.mcp_client.get_telemetry()
+        track_info = self.mcp_client.get_track_info()
         
         return {
             "situation": racing_situation,

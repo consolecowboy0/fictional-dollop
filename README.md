@@ -1,14 +1,14 @@
 # Racing AI Agent
 
-A custom AI agent that uses OpenAI API to connect to a racing MCP (Model Context Protocol) server and gather information about sim-racing or sim-rally scenarios.
+A custom AI agent that combines OpenAI with live iRacing telemetry (via [pyirsdk](https://pypi.org/project/pyirsdk)) to gather and explain what is happening on track in real time.
 
 ## Features
 
-- 🏎️ **MCP Server Integration**: Connects to racing MCP servers for real-time simulator data
-- 🤖 **AI-Powered Analysis**: Uses OpenAI GPT models to analyze racing situations
-- 📊 **Comprehensive Data Gathering**: Retrieves telemetry, race position, track info, and more
-- 🔌 **Extensible Design**: Built to easily extend functionality as the MCP server evolves
-- 💬 **Interactive Mode**: Ask questions and get AI-powered racing insights
+- 🏎️ **Live iRacing Telemetry**: Streams car, track, and session data directly from iRacing using pyirsdk
+- 🤖 **AI-Powered Analysis**: Uses OpenAI GPT models to turn telemetry into concise coaching insights
+- 📊 **Comprehensive Data Gathering**: Pulls position, lap info, vehicle status, track conditions, and competitor context
+- 🔌 **Extensible Design**: Easily add new telemetry fields or derived metrics within the async-friendly client
+- 💬 **Interactive Mode**: Ask custom questions about the current session and get AI-powered responses
 
 ## Installation
 
@@ -37,15 +37,11 @@ cp .env.example .env
 
 ## Configuration
 
-Create a `.env` file in the project root with the following variables:
+Create a `.env` file in the project root with the following variable:
 
 ```env
 # Required: Your OpenAI API key
 OPENAI_API_KEY=sk-your-actual-api-key-here
-
-# Optional: MCP server configuration
-MCP_SERVER_URL=http://localhost:3000
-MCP_SERVER_TIMEOUT=30
 ```
 
 ### Getting an OpenAI API Key
@@ -58,6 +54,8 @@ MCP_SERVER_TIMEOUT=30
 
 ## Usage
 
+> **Note:** Launch iRacing and join a session before calling `connect_to_server()` to receive live telemetry. When no session is active the client returns safe default values so demos can still run.
+
 ### Basic Example
 
 ```python
@@ -68,8 +66,11 @@ async def main():
     # Initialize the agent
     agent = RacingAIAgent(model="gpt-4")
     
-    # Connect to MCP server
-    await agent.connect_to_server()
+    # Connect to live iRacing telemetry (returns False if iRacing is not running)
+    connected = await agent.connect_to_server()
+    if not connected:
+        print("iRacing session not found. Start a session and try again.")
+        return
     
     # Get racing information
     racing_info = await agent.get_racing_info()
@@ -101,7 +102,7 @@ python example.py
 
 This will:
 1. Initialize the AI agent
-2. Connect to the MCP server
+2. Attempt to connect to the live iRacing session
 3. Demonstrate information gathering
 4. Show AI analysis capabilities
 5. Enter interactive Q&A mode
@@ -111,12 +112,12 @@ This will:
 ### Components
 
 1. **RacingMCPClient** (`src/mcp_client.py`)
-   - Handles connection to racing MCP servers
-   - Provides methods to retrieve racing data:
+    - Wraps pyirsdk for live iRacing telemetry access
+    - Provides methods to retrieve racing data:
      - `get_racing_situation()`: Current race position, lap, speed, etc.
      - `get_telemetry()`: RPM, gear, throttle, brake, steering, temps
      - `get_track_info()`: Track details and weather conditions
-   - Designed for easy extension when actual MCP server is available
+    - Designed for easy extension with additional telemetry variables
 
 2. **RacingAIAgent** (`src/ai_agent.py`)
    - Integrates OpenAI for intelligent analysis
@@ -129,12 +130,12 @@ This will:
 ### Data Flow
 
 ```
-Simulator → MCP Server → RacingMCPClient → RacingAIAgent → OpenAI → User
+iRacing Simulator → pyirsdk → RacingMCPClient → RacingAIAgent → OpenAI → User
 ```
 
 ## Extending the Agent
 
-The agent is designed to be easily extended once the MCP server is fully operational:
+The agent is designed to be easily extended as you experiment with new telemetry-driven ideas:
 
 ### Adding New Data Sources
 
@@ -142,8 +143,8 @@ The agent is designed to be easily extended once the MCP server is fully operati
 # In mcp_client.py, add new methods:
 async def get_pit_strategy(self) -> Dict[str, Any]:
     """Get pit stop strategy recommendations."""
-    # Implementation will query actual MCP server
-    pass
+    # Implementation could derive strategy from pyirsdk telemetry or custom logic
+    ...
 ```
 
 ### Custom Analysis Functions
@@ -152,8 +153,8 @@ async def get_pit_strategy(self) -> Dict[str, Any]:
 # In ai_agent.py, add specialized analysis:
 def analyze_tire_wear(self, telemetry: Dict[str, Any]) -> str:
     """Analyze tire wear and recommend pit timing."""
-    # Custom implementation
-    pass
+    # Inspect telemetry["temperatures"] and return actionable guidance
+    ...
 ```
 
 ## Development Status
@@ -162,15 +163,15 @@ def analyze_tire_wear(self, telemetry: Dict[str, Any]) -> str:
 
 - ✅ Project structure and dependencies
 - ✅ OpenAI integration with GPT models
-- ✅ MCP client framework with placeholder methods
+- ✅ pyirsdk-powered telemetry client with safe fallbacks
 - ✅ AI agent with conversation context
 - ✅ Example usage script with interactive mode
 - ✅ Documentation and configuration examples
 
-### Future Enhancements (when MCP server is ready)
+### Future Enhancements
 
-- 🔄 Actual MCP server connection implementation
-- 🔄 Real-time telemetry streaming
+- 🔄 Additional derived metrics (sector deltas, stint analysis)
+- 🔄 Historical telemetry capture and playback
 - 🔄 Historical data analysis
 - 🔄 Race strategy optimization
 - 🔄 Setup recommendations
@@ -185,13 +186,16 @@ If you see "OpenAI API key is required" error:
 2. Verify `OPENAI_API_KEY` is set correctly
 3. Check there are no extra spaces or quotes around the key
 
-### MCP Server Connection
+### Telemetry Connection
 
-Currently, the MCP server connection is a placeholder. The message "HTTP connection not yet implemented" is expected until the actual racing MCP server is deployed.
+- Ensure iRacing is running and you are loaded into a session before calling `connect_to_server()`.
+- Confirm `pyirsdk` installed correctly (`pip show pyirsdk`).
+- On Windows, run your shell as an administrator if you see access errors when attaching to iRacing.
+- The helper methods fall back to default values when telemetry is unavailable, so seeing `None`/`unknown` means the client could not read live data.
 
 ## Contributing
 
-Contributions are welcome! The agent is designed to grow with the MCP server implementation.
+Contributions are welcome! The agent is designed to grow alongside new telemetry sources and racing workflows.
 
 ## License
 

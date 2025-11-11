@@ -1,9 +1,4 @@
-"""
-Racing AI Agent Package
-
-A custom AI agent that connects to racing MCP servers and provides
-intelligent analysis of sim-racing and sim-rally data.
-"""
+"""Racing AI Agent package powered by OpenAI and live iRacing telemetry."""
 
 from .ai_agent import RacingAIAgent
 from .mcp_client import RacingMCPClient

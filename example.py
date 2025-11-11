@@ -1,17 +1,11 @@
 #!/usr/bin/env python3
-"""
-Example usage of the Racing AI Agent
+"""Example usage of the Racing AI Agent with live iRacing telemetry."""
 
-This script demonstrates how to use the Racing AI Agent to connect to
-a racing MCP server and gather information about sim-racing or sim-rally.
-"""
-
-import asyncio
 import sys
 from src import RacingAIAgent
 
 
-async def main():
+def main():
     """Main example function."""
     print("=" * 60)
     print("Racing AI Agent - Example Usage")
@@ -29,18 +23,20 @@ async def main():
         print("✓ Agent initialized successfully")
         print()
         
-        # Connect to the MCP server
-        print("Connecting to racing MCP server...")
-        await agent.connect_to_server()
-        print("✓ Connected to MCP server")
-        print("  (Note: This is a placeholder until the actual MCP server is available)")
+        # Connect to live telemetry
+        print("Connecting to live iRacing telemetry...")
+        connected = agent.connect_to_server()
+        if connected:
+            print("✓ Connected to iRacing session")
+        else:
+            print("! iRacing not detected. Live telemetry calls will return defaults.")
         print()
         
         # Example 1: Get racing information
         print("-" * 60)
         print("Example 1: Gathering Racing Information")
         print("-" * 60)
-        racing_info = await agent.get_racing_info()
+        racing_info = agent.get_racing_info()
         print("Racing Information:")
         print(f"  Situation: {racing_info['situation']}")
         print(f"  Telemetry: {racing_info['telemetry']}")
@@ -94,7 +90,7 @@ async def main():
                     continue
                 
                 # Get fresh racing info (in real scenario, this would be live data)
-                racing_info = await agent.get_racing_info()
+                racing_info = agent.get_racing_info()
                 
                 # Get AI response
                 response = agent.ask_question(user_input, racing_info)
@@ -106,8 +102,8 @@ async def main():
         
         # Disconnect from server
         print()
-        print("Disconnecting from MCP server...")
-        await agent.disconnect_from_server()
+        print("Disconnecting from iRacing telemetry...")
+        agent.disconnect_from_server()
         print("✓ Disconnected successfully")
         
     except ValueError as e:
@@ -130,4 +126,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
