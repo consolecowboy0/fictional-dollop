@@ -77,6 +77,10 @@ class RacingMCPClient:
         # Get current camera car index
         cam_idx = self._get("CamCarIdx", -1)
         
+        # Get player's position from the position array
+        positions = self._get("CarIdxPosition", []) or []
+        player_position = positions[cam_idx] if 0 <= cam_idx < len(positions) else None
+        
         # Build competitors list
         competitors: List[Dict[str, Any]] = []
         positions = self._get("CarIdxPosition", []) or []
@@ -95,7 +99,7 @@ class RacingMCPClient:
             })
 
         return {
-            "position": self._get("CarIdxPosition"),
+            "position": player_position,
             "lap": self._get("Lap"),
             "lap_distance": self._get("LapDist"),
             "speed": {
