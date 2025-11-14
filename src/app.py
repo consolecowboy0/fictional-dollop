@@ -12,6 +12,8 @@ from typing import Any, Dict, Optional
 from dotenv import load_dotenv
 from flask import Flask, Response, jsonify, request
 
+from .mcp_client import RacingMCPClient
+
 load_dotenv()
 
 app = Flask(__name__)
@@ -24,6 +26,15 @@ DEFAULT_INSTRUCTIONS = textwrap.dedent(
     introduce yourself as such when appropriate. Keep responses short and
     conversational, and guide the user if they seem unsure about what to
     try next.
+
+    You have limited access to live iRacing telemetry via the local MCP
+    service. Only request telemetry when the racer explicitly asks for it
+    or when you reasonably need the data to answer a racing-related
+    question. To request data send a JSON message on the data channel in
+    the following form: {"type":"tool_request","tool":"get_racing_situation"}.
+    Available tools: get_racing_situation, get_telemetry, get_track_info.
+    You will receive a matching tool_response message containing the data
+    which you can summarise back to the racer.
     """
 ).strip()
 
@@ -220,6 +231,20 @@ INDEX_HTML = """<!DOCTYPE html>
 
         dataChannel = pc.createDataChannel('oai-events');
         dataChannel.onmessage = (event) => {
+          let parsed = null;
+          try {
+            parsed = JSON.parse(event.data);
+          } catch (error) {
+            // Non-JSON message, just log it.
+          }
+
+          if (parsed && parsed.type === 'tool_request') {
+            handleToolRequest(parsed).catch((error) => {
+              logMessage('error', `tool request failed: ${error}`);
+            });
+            return;
+          }
+
           logMessage('ash', event.data);
         };
 
@@ -252,6 +277,43 @@ INDEX_HTML = """<!DOCTYPE html>
         setStatus('Connected. Start talking to Ash!');
         disconnectButton.disabled = false;
         logMessage('ash', 'Connected and ready.');
+      }
+
+      async function handleToolRequest(message) {
+        const tool = message.tool;
+        if (!tool) {
+          logMessage('warn', 'tool request missing tool field');
+          return;
+        }
+
+        logMessage('ash', `requesting ${tool} data...`);
+
+        let response;
+        try {
+          response = await fetch('/mcp', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tool, args: message.args || {} }),
+          });
+        } catch (error) {
+          logMessage('error', `failed to contact MCP endpoint: ${error}`);
+          return;
+        }
+
+        if (!response.ok) {
+          const text = await response.text();
+          logMessage('error', `MCP error: ${response.status} ${text}`);
+          return;
+        }
+
+        const payload = await response.json();
+        logMessage('system', `MCP ${tool} data received.`);
+
+        if (dataChannel && dataChannel.readyState === 'open') {
+          dataChannel.send(
+            JSON.stringify({ type: 'tool_response', tool, data: payload.data, error: payload.error || null })
+          );
+        }
       }
 
       function cleanupStreams() {
@@ -358,6 +420,47 @@ def _call_realtime_sessions(api_key: str, payload: Dict[str, Any]) -> Dict[str, 
         ) from error
     except urllib.error.URLError as error:
         raise RuntimeError(f"Failed to reach OpenAI realtime endpoint: {error.reason}") from error
+
+
+def _call_mcp_tool(tool_name: str, args: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    client = RacingMCPClient()
+    try:
+        connected = client.connect()
+        if not connected:
+            return {"data": None, "error": "Unable to connect to iRacing session."}
+
+        tool = getattr(client, tool_name, None)
+        if not callable(tool):
+            return {"data": None, "error": f"Unsupported tool '{tool_name}'."}
+
+        if args and not isinstance(args, dict):
+            return {"data": None, "error": "Tool arguments must be a JSON object."}
+
+        if args:
+            return {"data": None, "error": "This tool does not accept arguments."}
+
+        data = tool()
+        return {"data": data, "error": None}
+    except RuntimeError as error:
+        return {"data": None, "error": str(error)}
+    finally:
+        client.disconnect()
+
+
+@app.post("/mcp")
+def invoke_mcp_tool() -> Response:
+    """Invoke a telemetry tool on the Racing MCP client."""
+
+    request_body = request.get_json(silent=True) or {}
+    tool_name = request_body.get("tool")
+    if not tool_name:
+        return jsonify({"error": "Missing 'tool' field."}), 400
+
+    args = request_body.get("args")
+    result = _call_mcp_tool(str(tool_name), args if isinstance(args, dict) else None)
+
+    status = 200 if result["error"] in (None, "") else 503
+    return jsonify(result), status
 
 
 if __name__ == "__main__":
