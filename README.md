@@ -118,7 +118,7 @@ You can host a lightweight Flask site that mirrors the ChatGPT mobile voice expe
    flask --app src.app run --host 0.0.0.0 --port 5000
    ```
 
-3. Open your browser to [http://localhost:5000](http://localhost:5000) (or another HTTPS origin) and press **Connect**. Grant microphone permission when prompted and begin speaking with Ash in real time. If you previously blocked access, use your browser's site settings to re-enable the microphone before trying again.
+3. Open your browser to [http://localhost:5000](http://localhost:5000) and press **Connect**. Grant microphone permission when prompted and begin speaking with Ash in real time.
 
 The page automatically requests a short-lived Realtime session token from your server, establishes a WebRTC session with OpenAI, and streams bidirectional audio so you can converse naturally with Ash.
 

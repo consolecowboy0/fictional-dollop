@@ -135,11 +135,7 @@ INDEX_HTML = """<!DOCTYPE html>
         <button id=\"connect\" class=\"primary\">Connect</button>
         <button id=\"disconnect\" class=\"secondary\" disabled>Disconnect</button>
       </div>
-      <p class=\"status\" id=\"status\">Idle</p>
-      <p class=\"status\" id=\"permission-hint\" hidden>
-        Microphone permission is blocked. Use your browser's address bar or
-        site settings to enable the microphone, then press connect again.
-      </p>
+      <div class=\"status\" id=\"status\">Idle</div>
       <div class=\"log\" id=\"log\"></div>
       <audio id=\"remote-audio\" autoplay playsinline></audio>
     </div>
@@ -147,7 +143,6 @@ INDEX_HTML = """<!DOCTYPE html>
       const connectButton = document.getElementById('connect');
       const disconnectButton = document.getElementById('disconnect');
       const statusEl = document.getElementById('status');
-      const permissionHintEl = document.getElementById('permission-hint');
       const logEl = document.getElementById('log');
       const remoteAudio = document.getElementById('remote-audio');
 
@@ -171,75 +166,15 @@ INDEX_HTML = """<!DOCTYPE html>
         logMessage('status', text);
       }
 
-      function allowOnLocalhost() {
-        const host = window.location.hostname;
-        return host === 'localhost' || host === '127.0.0.1' || host === '[::1]';
-      }
-
-      function describePermissionError(error) {
-        if (error && typeof error === 'object') {
-          if (error.name === 'NotAllowedError' || error.name === 'SecurityError') {
-            return (
-              'Microphone permission was blocked. Use your browser\'s address bar or site settings to enable the microphone, then press connect again.'
-            );
-          }
-          if (error.name === 'NotFoundError') {
-            return 'No microphone was found. Plug one in or choose a different input device and try again.';
-          }
-        }
-        return 'Unable to access the microphone.';
-      }
-
-      async function acquireMicrophoneStream() {
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-          throw new Error('Microphone access is not supported in this browser.');
-        }
-
-        if (!window.isSecureContext && !allowOnLocalhost()) {
-          throw new Error(
-            'Microphone capture requires HTTPS. Reopen this page using https:// or via http://localhost.'
-          );
-        }
-
-        if (navigator.permissions?.query) {
-          try {
-            const status = await navigator.permissions.query({ name: 'microphone' });
-            permissionHintEl.hidden = status.state !== 'denied';
-          } catch (error) {
-            logMessage('warn', `Unable to check microphone permission: ${error}`);
-          }
-        }
-
-        return navigator.mediaDevices.getUserMedia({
-          audio: {
-            channelCount: 1,
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          },
-          video: false,
-        });
-      }
-
       async function connect() {
         connectButton.disabled = true;
         setStatus('Requesting microphone access...');
         try {
-          localStream = await acquireMicrophoneStream();
-          permissionHintEl.hidden = true;
+          localStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true } });
         } catch (error) {
           connectButton.disabled = false;
-          const message = describePermissionError(error);
-          setStatus(message);
+          setStatus('Microphone permission denied.');
           logMessage('error', String(error));
-          if (navigator.permissions?.query) {
-            try {
-              const status = await navigator.permissions.query({ name: 'microphone' });
-              permissionHintEl.hidden = status.state !== 'denied';
-            } catch (permissionError) {
-              logMessage('warn', `Unable to refresh permission status: ${permissionError}`);
-            }
-          }
           return;
         }
 
