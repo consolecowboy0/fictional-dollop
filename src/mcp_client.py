@@ -102,15 +102,25 @@ class RacingMCPClient:
             "position": player_position,
             "lap": self._get("Lap"),
             "lap_distance": self._get("LapDist"),
+            "lap_percent": self._get("LapDistPct"),
+            "lap_best_time": self._get("LapBestLapTime"),
+            "lap_last_time": self._get("LapLastLapTime"),
+            "lap_delta_to_best": self._get("LapDeltaToBestLap"),
             "speed": {
                 "m_s": speed_ms,
                 "km_h": speed_ms * 3.6 if speed_ms else 0.0,
                 "mph": speed_ms * 2.237 if speed_ms else 0.0,
             },
+            "session": {
+                "time_remaining": self._get("SessionTimeRemain"),
+                "laps_remaining": self._get("SessionLapsRemain"),
+                "flag_state": self._get("SessionFlags"),
+            },
             "track_conditions": {
                 "track_temp_c": self._get("TrackTempCrew"),
                 "air_temp_c": self._get("AirTemp"),
                 "weather_type": self._get("WeatherType"),
+                "on_pit_road": self._get("OnPitRoad"),
             },
             "vehicle_status": {
                 "fuel_level_l": self._get("FuelLevel"),
@@ -118,7 +128,7 @@ class RacingMCPClient:
                 "oil_temp_c": self._get("OilTemp"),
                 "water_temp_c": self._get("WaterTemp"),
             },
-            "competitors": competitors,
+            "competitors": competitors[:5],
         }
 
     def get_telemetry(self) -> Dict[str, Any]:
