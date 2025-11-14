@@ -4,15 +4,22 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import textwrap
 import urllib.error
 import urllib.request
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 from dotenv import load_dotenv
 from flask import Flask, Response, jsonify, request
 
-from .mcp_client import RacingMCPClient
+if __package__ in (None, ""):
+    # Allow running `python src/app.py` by ensuring the repository root is on sys.path.
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from src.mcp_client import RacingMCPClient  # type: ignore
+else:
+    from .mcp_client import RacingMCPClient
 
 load_dotenv()
 
@@ -27,14 +34,13 @@ DEFAULT_INSTRUCTIONS = textwrap.dedent(
     conversational, and guide the user if they seem unsure about what to
     try next.
 
-    You have limited access to live iRacing telemetry via the local MCP
-    service. Only request telemetry when the racer explicitly asks for it
-    or when you reasonably need the data to answer a racing-related
-    question. To request data send a JSON message on the data channel in
-    the following form: {"type":"tool_request","tool":"get_racing_situation"}.
-    Available tools: get_racing_situation, get_telemetry, get_track_info.
-    You will receive a matching tool_response message containing the data
-    which you can summarise back to the racer.
+    The racer can push live iRacing telemetry snapshots directly into this
+    conversation. These snapshots arrive as normal user messages that
+    contain structured JSON data (for example: get_racing_situation,
+    get_telemetry, get_track_info). When you see one, read the data and
+    summarise it back to the racer in plain language, highlighting
+    insights or potential next steps. Do not wait for any tool responses;
+    everything you need will be embedded in the message you receive.
     """
 ).strip()
 
@@ -43,23 +49,7 @@ INDEX_HTML = """<!DOCTYPE html>
   <head>
     <meta charset=\"utf-8\" />
     <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
-    <title>Ash Realtime Chat</title>
     <style>
-      :root {
-        color-scheme: light dark;
-        font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI',
-          sans-serif;
-      }
-      body {
-        margin: 0;
-        min-height: 100vh;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        background: radial-gradient(circle at top, #1e88e5 0%, #0d47a1 45%, #021f3f 100%);
-        color: #f5f5f5;
-      }
-      .card {
         background: rgba(12, 23, 46, 0.85);
         border-radius: 18px;
         padding: 28px 32px;
@@ -129,6 +119,12 @@ INDEX_HTML = """<!DOCTYPE html>
         font-weight: 600;
         margin-right: 0.35rem;
       }
+      .actions {
+        margin-top: 1rem;
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
       audio {
         display: none;
       }
@@ -148,14 +144,20 @@ INDEX_HTML = """<!DOCTYPE html>
       </div>
       <div class=\"status\" id=\"status\">Idle</div>
       <div class=\"log\" id=\"log\"></div>
+      <div class=\"actions\">
+        <button id=\"snapshot\" class=\"secondary\" disabled>Send MCP Snapshot</button>
+      </div>
       <audio id=\"remote-audio\" autoplay playsinline></audio>
     </div>
     <script>
       const connectButton = document.getElementById('connect');
       const disconnectButton = document.getElementById('disconnect');
+      const snapshotButton = document.getElementById('snapshot');
       const statusEl = document.getElementById('status');
       const logEl = document.getElementById('log');
       const remoteAudio = document.getElementById('remote-audio');
+      const snapshotButtonLabel = snapshotButton.textContent;
+      const CONVERSATION_ID = 'default';
 
       let pc = null;
       let localStream = null;
@@ -177,13 +179,22 @@ INDEX_HTML = """<!DOCTYPE html>
         logMessage('status', text);
       }
 
+      function resetSnapshotButton(disable = true) {
+        if (disable) {
+          snapshotButton.disabled = true;
+        }
+        snapshotButton.textContent = snapshotButtonLabel;
+      }
+
       async function connect() {
         connectButton.disabled = true;
+        resetSnapshotButton(true);
         setStatus('Requesting microphone access...');
         try {
           localStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true } });
         } catch (error) {
           connectButton.disabled = false;
+          resetSnapshotButton(true);
           setStatus('Microphone permission denied.');
           logMessage('error', String(error));
           return;
@@ -200,6 +211,7 @@ INDEX_HTML = """<!DOCTYPE html>
           sessionResponse = await resp.json();
         } catch (error) {
           connectButton.disabled = false;
+          resetSnapshotButton(true);
           setStatus('Unable to create session.');
           logMessage('error', String(error));
           return;
@@ -209,6 +221,7 @@ INDEX_HTML = """<!DOCTYPE html>
         const model = sessionResponse?.model;
         if (!clientSecret || !model) {
           connectButton.disabled = false;
+          resetSnapshotButton(true);
           setStatus('Session response was missing credentials.');
           logMessage('error', JSON.stringify(sessionResponse));
           return;
@@ -231,20 +244,6 @@ INDEX_HTML = """<!DOCTYPE html>
 
         dataChannel = pc.createDataChannel('oai-events');
         dataChannel.onmessage = (event) => {
-          let parsed = null;
-          try {
-            parsed = JSON.parse(event.data);
-          } catch (error) {
-            // Non-JSON message, just log it.
-          }
-
-          if (parsed && parsed.type === 'tool_request') {
-            handleToolRequest(parsed).catch((error) => {
-              logMessage('error', `tool request failed: ${error}`);
-            });
-            return;
-          }
-
           logMessage('ash', event.data);
         };
 
@@ -276,44 +275,8 @@ INDEX_HTML = """<!DOCTYPE html>
         await pc.setRemoteDescription(answer);
         setStatus('Connected. Start talking to Ash!');
         disconnectButton.disabled = false;
+        snapshotButton.disabled = false;
         logMessage('ash', 'Connected and ready.');
-      }
-
-      async function handleToolRequest(message) {
-        const tool = message.tool;
-        if (!tool) {
-          logMessage('warn', 'tool request missing tool field');
-          return;
-        }
-
-        logMessage('ash', `requesting ${tool} data...`);
-
-        let response;
-        try {
-          response = await fetch('/mcp', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ tool, args: message.args || {} }),
-          });
-        } catch (error) {
-          logMessage('error', `failed to contact MCP endpoint: ${error}`);
-          return;
-        }
-
-        if (!response.ok) {
-          const text = await response.text();
-          logMessage('error', `MCP error: ${response.status} ${text}`);
-          return;
-        }
-
-        const payload = await response.json();
-        logMessage('system', `MCP ${tool} data received.`);
-
-        if (dataChannel && dataChannel.readyState === 'open') {
-          dataChannel.send(
-            JSON.stringify({ type: 'tool_response', tool, data: payload.data, error: payload.error || null })
-          );
-        }
       }
 
       function cleanupStreams() {
@@ -337,6 +300,8 @@ INDEX_HTML = """<!DOCTYPE html>
         cleanupStreams();
         connectButton.disabled = false;
         disconnectButton.disabled = true;
+        snapshotButton.disabled = true;
+        snapshotButton.textContent = snapshotButtonLabel;
         setStatus('Disconnected.');
       }
 
@@ -358,6 +323,92 @@ INDEX_HTML = """<!DOCTYPE html>
 
       window.addEventListener('beforeunload', () => {
         disconnect();
+      });
+
+      function formatSnapshotText(snapshot) {
+        if (!snapshot || typeof snapshot !== 'object') {
+          return 'MCP snapshot is unavailable.';
+        }
+        if (snapshot.error) {
+          return `MCP snapshot failed: ${snapshot.error}`;
+        }
+        const tools = snapshot.tools || {};
+        const parts = Object.entries(tools).map(([name, entry]) => {
+          if (!entry) {
+            return `${name}: no data`;
+          }
+          if (entry.error) {
+            return `${name}: error - ${entry.error}`;
+          }
+          try {
+            return `${name}: ${JSON.stringify(entry.data)}`;
+          } catch (error) {
+            return `${name}: data available`;
+          }
+        });
+        if (!parts.length) {
+          return 'MCP snapshot returned no tools.';
+        }
+        return `MCP snapshot data\n${parts.join('\n')}`;
+      }
+
+      async function pushMcpSnapshotToChat() {
+        if (!pc || pc.connectionState !== 'connected') {
+          logMessage('warn', 'Connect to Ash before sending a snapshot.');
+          return;
+        }
+        if (!dataChannel || dataChannel.readyState !== 'open') {
+          logMessage('warn', 'Realtime data channel is not ready.');
+          return;
+        }
+
+        snapshotButton.disabled = true;
+        snapshotButton.textContent = 'Sending snapshot...';
+        try {
+          const response = await fetch('/mcp_snapshot', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+          const payload = await response.json();
+          if (!response.ok) {
+            const errorMessage = payload?.error || 'Snapshot request failed.';
+            logMessage('error', errorMessage);
+            return;
+          }
+
+          const textSummary = formatSnapshotText(payload);
+          logMessage('system', textSummary);
+
+          dataChannel.send(
+            JSON.stringify({
+              type: 'conversation.item.create',
+              conversation: CONVERSATION_ID,
+              item: {
+                type: 'message',
+                role: 'user',
+                content: [{ type: 'input_text', text: textSummary }],
+              },
+            })
+          );
+          dataChannel.send(
+            JSON.stringify({
+              type: 'response.create',
+              response: {
+                conversation: CONVERSATION_ID,
+                instructions: 'Use the latest MCP snapshot message to answer the racer.',
+                modalities: ['audio', 'text'],
+              },
+            })
+          );
+        } catch (error) {
+          logMessage('error', `Failed to send snapshot: ${error}`);
+        } finally {
+          snapshotButton.disabled = false;
+          snapshotButton.textContent = snapshotButtonLabel;
+        }
+      }
+
+      snapshotButton.addEventListener('click', () => {
+        pushMcpSnapshotToChat().catch((error) => {
+          logMessage('error', String(error));
+        });
       });
     </script>
   </body>
@@ -447,6 +498,40 @@ def _call_mcp_tool(tool_name: str, args: Optional[Dict[str, Any]] = None) -> Dic
         client.disconnect()
 
 
+def _collect_all_tool_data() -> Dict[str, Any]:
+    client = RacingMCPClient()
+    snapshot: Dict[str, Any] = {"tools": {}, "error": None}
+    try:
+        connected = client.connect()
+        if not connected:
+            snapshot["error"] = "Unable to connect to iRacing session."
+            return snapshot
+
+        available_tools = []
+        try:
+            available_tools = client.list_available_tools()
+        except Exception as error:  # pragma: no cover - defensive guard
+            snapshot["error"] = f"Failed to list tools: {error}"
+            return snapshot
+
+        for tool_name in available_tools:
+            tool = getattr(client, tool_name, None)
+            if not callable(tool):
+                snapshot["tools"][tool_name] = {"data": None, "error": "Tool not callable."}
+                continue
+            try:
+                data = tool()
+                snapshot["tools"][tool_name] = {"data": data, "error": None}
+            except RuntimeError as error:
+                snapshot["tools"][tool_name] = {"data": None, "error": str(error)}
+            except Exception as error:  # pragma: no cover - unexpected failure
+                snapshot["tools"][tool_name] = {"data": None, "error": f"Unexpected error: {error}"}
+
+        return snapshot
+    finally:
+        client.disconnect()
+
+
 @app.post("/mcp")
 def invoke_mcp_tool() -> Response:
     """Invoke a telemetry tool on the Racing MCP client."""
@@ -457,10 +542,23 @@ def invoke_mcp_tool() -> Response:
         return jsonify({"error": "Missing 'tool' field."}), 400
 
     args = request_body.get("args")
+    tool_request_id = request_body.get("tool_request_id")
+    tool_call_id = request_body.get("tool_call_id")
     result = _call_mcp_tool(str(tool_name), args if isinstance(args, dict) else None)
+    result["tool_request_id"] = tool_request_id
+    result["tool_call_id"] = tool_call_id
 
     status = 200 if result["error"] in (None, "") else 503
     return jsonify(result), status
+
+
+@app.post("/mcp_snapshot")
+def mcp_snapshot() -> Response:
+    """Return a dump of all available MCP tool data."""
+
+    snapshot = _collect_all_tool_data()
+    status = 200 if snapshot.get("error") in (None, "") else 503
+    return jsonify(snapshot), status
 
 
 if __name__ == "__main__":
